@@ -24,6 +24,33 @@ public class KeywordRepository : IKeywordRepository
             .ToListAsync();
     }
 
+    public Task<List<KeywordConfig>> ListBlacklistAsync(
+        int? accountId = null,
+        BlacklistEntryType? type = null)
+    {
+        var query = _db.Queryable<KeywordConfig>()
+            .Where(x => x.KeywordAction == KeywordAction.Exclude)
+            .Where(x =>
+                x.ChatId != null ||
+                (x.IsMatchUser && x.ChatId == null && x.ExactContent == null));
+
+        if (accountId.HasValue)
+        {
+            query = accountId.Value > 0
+                ? query.Where(x => x.AccountId == accountId.Value)
+                : query.Where(x => x.AccountId == null);
+        }
+
+        if (type == BlacklistEntryType.User)
+            query = query.Where(x => x.IsMatchUser && x.ChatId == null && x.ExactContent == null);
+        else if (type == BlacklistEntryType.Chat)
+            query = query.Where(x => x.ChatId != null);
+
+        return query
+            .OrderByDescending(x => x.Id)
+            .ToListAsync();
+    }
+
     public async Task AddAsync(KeywordConfig keyword)
     {
         Validate(keyword);
@@ -109,6 +136,37 @@ public class KeywordRepository : IKeywordRepository
 
         await _db.Deleteable<KeywordConfig>().In(deleteIds).ExecuteCommandAsync();
     }
+
+    public async Task SetBlacklistEnabledAsync(int id, bool enabled)
+    {
+        var existing = await RequireBlacklistAsync(id);
+        existing.IsEnabled = enabled;
+        existing.UpdatedAt = ChinaTime.Now;
+        await _db.Updateable(existing).UpdateColumns(x => new { x.IsEnabled, x.UpdatedAt }).ExecuteCommandAsync();
+    }
+
+    public async Task DeleteBlacklistAsync(int id)
+    {
+        await RequireBlacklistAsync(id);
+        await _db.Deleteable<KeywordConfig>().In(id).ExecuteCommandAsync();
+    }
+
+    private async Task<KeywordConfig> RequireBlacklistAsync(int id)
+    {
+        var existing = id > 0
+            ? await _db.Queryable<KeywordConfig>().FirstAsync(x => x.Id == id)
+            : null;
+
+        if (existing == null || !IsUserOrChatBlacklist(existing))
+            throw Oops.Oh($"黑名单记录不存在: {id}");
+
+        return existing;
+    }
+
+    private static bool IsUserOrChatBlacklist(KeywordConfig keyword) =>
+        keyword.KeywordAction == KeywordAction.Exclude &&
+        (keyword.ChatId.HasValue ||
+         (keyword.IsMatchUser && keyword.ChatId == null && keyword.ExactContent == null));
 
     private async Task EnsureUniqueAsync(KeywordConfig keyword, int? ignoreId = null)
     {
