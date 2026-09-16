@@ -8,6 +8,7 @@ public class BotService : IBotService, IAsyncDisposable
 {
     private readonly IBotNotifyTargetRepository _targetRepository;
     private readonly IKeywordRepository _keywordRepository;
+    private readonly ITelegramMessageArchiveService _messageArchive;
     private readonly ILogger<BotService> _logger;
     private readonly BotOptions _options;
 
@@ -18,10 +19,12 @@ public class BotService : IBotService, IAsyncDisposable
     public BotService(
         IBotNotifyTargetRepository targetRepository,
         IKeywordRepository keywordRepository,
+        ITelegramMessageArchiveService messageArchive,
         ILogger<BotService> logger)
     {
         _targetRepository = targetRepository;
         _keywordRepository = keywordRepository;
+        _messageArchive = messageArchive;
         _logger = logger;
         _options = App.GetConfig<BotOptions>("Bot") ?? new BotOptions();
     }
@@ -176,21 +179,20 @@ public class BotService : IBotService, IAsyncDisposable
         return await _targetRepository.AddAsync(target);
     }
 
-    public async Task<int> SendNotifyMessageAsync(long chatId, string htmlText, string? callbackData)
+    public async Task<int> SendNotifyMessageAsync(long chatId, string htmlText, BotCallbackActions callbackActions)
     {
         if (_bots.Count == 0)
             throw new InvalidOperationException("Bot 未初始化");
 
         var startIndex = (int)((uint)Interlocked.Increment(ref _roundRobinIndex) % _bots.Count);
 
-        InlineKeyboardMarkup? replyMarkup = null;
-        if (!string.IsNullOrEmpty(callbackData))
-        {
-            replyMarkup = new InlineKeyboardMarkup(new[]
-            {
-                new[] { InlineKeyboardButton.WithCallbackData("🚫 屏蔽此人", callbackData) }
-            });
-        }
+        var buttons = new List<InlineKeyboardButton>();
+        AddButton(buttons, "🚫 屏蔽此人", callbackActions.BlockUser);
+        AddButton(buttons, "🚫 屏蔽此群组", callbackActions.BlockChat);
+        AddButton(buttons, "🚫 屏蔽此内容", callbackActions.BlockContent);
+        InlineKeyboardMarkup? replyMarkup = buttons.Count == 0
+            ? null
+            : new InlineKeyboardMarkup(buttons.Select(button => new[] { button }).ToArray());
 
         Exception? lastException = null;
         for (var offset = 0; offset < _bots.Count; offset++)
@@ -222,6 +224,12 @@ public class BotService : IBotService, IAsyncDisposable
         throw new InvalidOperationException("没有可用的 Bot 可用于发送通知");
     }
 
+    private static void AddButton(List<InlineKeyboardButton> buttons, string text, string? callbackData)
+    {
+        if (!string.IsNullOrWhiteSpace(callbackData))
+            buttons.Add(InlineKeyboardButton.WithCallbackData(text, callbackData));
+    }
+
     public async ValueTask DisposeAsync()
     {
         foreach (var bot in _bots)
@@ -250,7 +258,14 @@ public class BotService : IBotService, IAsyncDisposable
 
     private async Task HandleCallbackAsync(WTelegram.Bot answerBot, Telegram.Bot.Types.CallbackQuery cq, string data)
     {
-        if (!data.StartsWith("blk:", StringComparison.Ordinal))
+        if (data.StartsWith("blk:", StringComparison.Ordinal))
+        {
+            await HandleLegacyBlockUserCallbackAsync(answerBot, cq, data);
+            return;
+        }
+
+        var parts = data.Split(':');
+        if (parts.Length != 3 || parts[0] is not ("blku" or "blkg" or "blkc"))
         {
             await AnswerCallbackAsync(answerBot, cq.Id, "未知操作");
             return;
@@ -258,40 +273,30 @@ public class BotService : IBotService, IAsyncDisposable
 
         try
         {
-            var parts = data.Split(':');
-            if (parts.Length < 3)
+            if (!int.TryParse(parts[1], out var accountId) ||
+                !int.TryParse(parts[2], out var recordId))
             {
-                await AnswerCallbackAsync(answerBot, cq.Id, "参数不完整");
+                await AnswerCallbackAsync(answerBot, cq.Id, "按钮参数无效");
                 return;
             }
 
-            var accountIdPart = parts[1];
-            var senderIdPart = parts[2];
-            int? accountId = accountIdPart == "g" ? null : int.TryParse(accountIdPart, out var aid) ? aid : null;
-
-            if (!long.TryParse(senderIdPart, out var senderId))
+            var record = await _messageArchive.FindByIdAsync(recordId);
+            if (record == null || record.AccountId != accountId)
             {
-                await AnswerCallbackAsync(answerBot, cq.Id, "发送者 ID 无效");
+                await AnswerCallbackAsync(answerBot, cq.Id, "原消息记录不存在");
                 return;
             }
 
-            var keyword = new KeywordConfig
+            var (keyword, successMessage) = parts[0] switch
             {
-                AccountId = accountId,
-                RuleName = $"屏蔽用户 {senderId}",
-                KeywordPattern = KeywordPatternBuilder.MatchAllPattern,
-                MatchMode = KeywordMatchMode.Regex,
-                IsMatchUser = true,
-                UserPattern = $"^{senderId}$",
-                KeywordAction = KeywordAction.Exclude,
-                IsCaseSensitive = false,
-                IsEnabled = true,
-                Priority = -1,
-                Remark = "由 Bot 按钮自动创建"
+                "blku" => BuildBlockUserRule(accountId, record),
+                "blkg" => BuildBlockChatRule(accountId, record),
+                "blkc" => BuildBlockContentRule(accountId, record),
+                _ => throw Oops.Oh("未知操作")
             };
 
             await _keywordRepository.AddAsync(keyword);
-            await AnswerCallbackAsync(answerBot, cq.Id, $"已屏蔽用户 {senderId}");
+            await AnswerCallbackAsync(answerBot, cq.Id, successMessage);
         }
         catch (Exception ex)
         {
@@ -299,6 +304,100 @@ public class BotService : IBotService, IAsyncDisposable
             await AnswerCallbackAsync(answerBot, cq.Id, $"操作失败: {ex.Message}");
         }
     }
+
+    private async Task HandleLegacyBlockUserCallbackAsync(
+        WTelegram.Bot answerBot,
+        Telegram.Bot.Types.CallbackQuery cq,
+        string data)
+    {
+        try
+        {
+            var parts = data.Split(':');
+            if (parts.Length < 3 || !long.TryParse(parts[2], out var senderId))
+            {
+                await AnswerCallbackAsync(answerBot, cq.Id, "发送者 ID 无效");
+                return;
+            }
+
+            int? accountId = parts[1] == "g"
+                ? null
+                : int.TryParse(parts[1], out var aid) ? aid : null;
+
+            await _keywordRepository.AddAsync(BuildBaseBlockRule(
+                accountId,
+                $"屏蔽用户 {senderId}",
+                true,
+                $"^{senderId}$"));
+            await AnswerCallbackAsync(answerBot, cq.Id, $"已屏蔽用户 {senderId}");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "处理旧版 Bot 回调失败: {Data}", data);
+            await AnswerCallbackAsync(answerBot, cq.Id, $"操作失败: {ex.Message}");
+        }
+    }
+
+    private static (KeywordConfig Rule, string Message) BuildBlockUserRule(
+        int accountId,
+        TelegramMessageRecord record)
+    {
+        if (!record.SenderId.HasValue)
+            throw Oops.Oh("该消息没有可屏蔽的发送者");
+
+        var senderId = record.SenderId.Value;
+        return (
+            BuildBaseBlockRule(accountId, $"屏蔽用户 {senderId}", true, $"^{senderId}$"),
+            $"已屏蔽用户 {senderId}");
+    }
+
+    private static (KeywordConfig Rule, string Message) BuildBlockChatRule(
+        int accountId,
+        TelegramMessageRecord record)
+    {
+        if (!record.ChatId.HasValue || string.Equals(record.ChatType, "User", StringComparison.OrdinalIgnoreCase))
+            throw Oops.Oh("该消息不属于可屏蔽的群组或频道");
+
+        var chatTitle = string.IsNullOrWhiteSpace(record.ChatTitle)
+            ? record.ChatId.Value.ToString()
+            : record.ChatTitle;
+        var rule = BuildBaseBlockRule(accountId, $"屏蔽群组 {chatTitle}");
+        rule.ChatId = record.ChatId.Value;
+        return (rule, $"已屏蔽群组 {chatTitle}");
+    }
+
+    private static (KeywordConfig Rule, string Message) BuildBlockContentRule(
+        int accountId,
+        TelegramMessageRecord record)
+    {
+        if (string.IsNullOrEmpty(record.Text))
+            throw Oops.Oh("该消息没有可屏蔽的文本内容");
+
+        var preview = record.Text.Length <= 30 ? record.Text : record.Text[..30] + "...";
+        var rule = BuildBaseBlockRule(accountId, $"屏蔽内容 {preview}");
+        rule.ExactContent = record.Text;
+        rule.IsCaseSensitive = true;
+        return (rule, "已屏蔽完全相同的消息内容");
+    }
+
+    private static KeywordConfig BuildBaseBlockRule(
+        int? accountId,
+        string ruleName,
+        bool isMatchUser = false,
+        string? userPattern = null) =>
+        new()
+        {
+            AccountId = accountId,
+            RuleName = ruleName,
+            KeywordPattern = KeywordPatternBuilder.MatchAllPattern,
+            MatchMode = KeywordMatchMode.Regex,
+            IsMatchUser = isMatchUser,
+            UserPattern = userPattern,
+            KeywordAction = KeywordAction.Exclude,
+            IsCaseSensitive = false,
+            IsEnabled = true,
+            Priority = -1,
+            Remark = "由 Bot 按钮自动创建"
+        };
 
     private static bool HasSendPermission(ChatType chatType, Telegram.Bot.Types.ChatMember member) =>
         chatType switch

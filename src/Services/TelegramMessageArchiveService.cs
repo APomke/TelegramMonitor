@@ -17,7 +17,7 @@ public class TelegramMessageArchiveService : ITelegramMessageArchiveService
         bool isEdited)
     {
         var record = BuildRecord(accountId, manager, updateType, messageBase, isEdited);
-        await _db.Insertable(record).ExecuteCommandAsync();
+        record.Id = await _db.Insertable(record).ExecuteReturnIdentityAsync();
         return record;
     }
 

@@ -4,6 +4,7 @@ public static class KeywordMatchExtensions
 {
     public static List<KeywordConfig> Match(
         string? message,
+        long? chatId,
         long? userId,
         IReadOnlyCollection<string>? userNames,
         IEnumerable<KeywordConfig>? allKeywords)
@@ -16,6 +17,7 @@ public static class KeywordMatchExtensions
 
         return GetActiveRules(allKeywords)
             .Where(rule => IsTextMatch(rule, text))
+            .Where(rule => IsChatMatch(rule, chatId))
             .Where(rule => IsUserMatch(rule, userCandidates))
             .ToList();
     }
@@ -41,5 +43,10 @@ public static class KeywordMatchExtensions
     }
 
     private static bool IsTextMatch(KeywordConfig rule, string message) =>
-        KeywordPatternBuilder.IsRegexMatch(message, rule.KeywordPattern, rule.IsCaseSensitive);
+        rule.ExactContent != null
+            ? string.Equals(message, rule.ExactContent, StringComparison.Ordinal)
+            : KeywordPatternBuilder.IsRegexMatch(message, rule.KeywordPattern, rule.IsCaseSensitive);
+
+    private static bool IsChatMatch(KeywordConfig rule, long? chatId) =>
+        !rule.ChatId.HasValue || rule.ChatId == chatId;
 }

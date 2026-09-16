@@ -35,13 +35,18 @@ public static class BotMessageFormatter
         return sb.ToString();
     }
 
-    public static string? BuildCallbackData(int accountId, TelegramMessageRecord record)
-    {
-        if (record.SenderId == null)
-            return null;
+    public static BotCallbackActions BuildCallbackActions(int accountId, TelegramMessageRecord record) =>
+        new(
+            record.SenderId.HasValue ? BuildCallbackData("blku", accountId, record.Id) : null,
+            record.ChatId.HasValue && !string.Equals(record.ChatType, "User", StringComparison.OrdinalIgnoreCase)
+                ? BuildCallbackData("blkg", accountId, record.Id)
+                : null,
+            !string.IsNullOrEmpty(record.Text) ? BuildCallbackData("blkc", accountId, record.Id) : null);
 
-        var data = $"blk:{accountId}:{record.SenderId}";
-        return data.Length > 64 ? null : data;
+    private static string? BuildCallbackData(string action, int accountId, int recordId)
+    {
+        var data = $"{action}:{accountId}:{recordId}";
+        return data.Length <= 64 ? data : null;
     }
 
     private static string? BuildMessageLink(TelegramMessageRecord record)
@@ -71,3 +76,8 @@ public static class BotMessageFormatter
         return value.Length <= maxLength ? value : value[..maxLength] + "...";
     }
 }
+
+public record BotCallbackActions(
+    string? BlockUser,
+    string? BlockChat,
+    string? BlockContent);

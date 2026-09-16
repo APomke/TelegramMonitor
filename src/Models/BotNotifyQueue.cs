@@ -6,7 +6,7 @@ public record BotNotifyItem(
     long TargetChatId,
     string TargetChatTitle,
     string MessageText,
-    string? CallbackData);
+    BotCallbackActions CallbackActions);
 
 public class BotNotifyChannel
 {

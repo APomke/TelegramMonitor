@@ -76,6 +76,8 @@ public class KeywordRepository : IKeywordRepository
         existing.MatchMode = keyword.MatchMode;
         existing.IsMatchUser = keyword.IsMatchUser;
         existing.UserPattern = keyword.IsMatchUser ? keyword.UserPattern?.Trim() : null;
+        // ChatId 和 ExactContent 是由 Bot 快捷屏蔽按钮维护的内部限定条件。
+        // 常规关键词编辑接口不暴露这两个字段，更新时必须保留原值。
         existing.KeywordAction = keyword.KeywordAction;
         existing.IsCaseSensitive = keyword.IsCaseSensitive;
         existing.IsEnabled = keyword.IsEnabled;
@@ -116,7 +118,9 @@ public class KeywordRepository : IKeywordRepository
                 x.KeywordPattern == keyword.KeywordPattern &&
                 x.IsCaseSensitive == keyword.IsCaseSensitive &&
                 x.IsMatchUser == keyword.IsMatchUser &&
-                SqlFunc.IsNull(x.UserPattern, string.Empty) == (keyword.UserPattern ?? string.Empty));
+                SqlFunc.IsNull(x.UserPattern, string.Empty) == (keyword.UserPattern ?? string.Empty) &&
+                x.ChatId == keyword.ChatId &&
+                SqlFunc.IsNull(x.ExactContent, string.Empty) == (keyword.ExactContent ?? string.Empty));
 
         if (ignoreId.HasValue)
             query = query.Where(x => x.Id != ignoreId.Value);

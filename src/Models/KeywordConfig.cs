@@ -31,6 +31,14 @@ public class KeywordConfig
     [Description("用户匹配正则")]
     public string? UserPattern { get; set; }
 
+    [SugarColumn(IsNullable = true, ColumnDescription = "限定 Telegram 会话 ID")]
+    [Description("限定 Telegram 会话 ID")]
+    public long? ChatId { get; set; }
+
+    [SugarColumn(IsNullable = true, ColumnDataType = StaticConfig.CodeFirst_BigString, ColumnDescription = "精确屏蔽的完整消息内容")]
+    [Description("精确屏蔽的完整消息内容")]
+    public string? ExactContent { get; set; }
+
     [SugarColumn(ColumnName = "KeywordAction", ColumnDescription = "命中动作")]
     [Description("命中动作")]
     public KeywordAction KeywordAction { get; set; } = KeywordAction.Monitor;

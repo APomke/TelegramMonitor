@@ -46,7 +46,7 @@ public class BotNotifySendJob : IJob
                 var sentMessageId = await _botService.SendNotifyMessageAsync(
                     item.TargetChatId,
                     item.MessageText,
-                    item.CallbackData);
+                    item.CallbackActions);
 
                 _logger.LogDebug("通知已发送到 {ChatTitle}({ChatId}), MessageId={SentMessageId}",
                     item.TargetChatTitle, item.TargetChatId, sentMessageId);

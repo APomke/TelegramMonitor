@@ -467,6 +467,7 @@ public class TelegramAccountRuntimeHub : ITelegramAccountRuntimeHub
 
             var matched = KeywordMatchExtensions.Match(
                 record.Text,
+                record.ChatId,
                 record.SenderId,
                 senderUserNames,
                 allKeywords);
@@ -495,7 +496,7 @@ public class TelegramAccountRuntimeHub : ITelegramAccountRuntimeHub
             .Select(r => string.IsNullOrWhiteSpace(r.RuleName) ? r.KeywordPattern : r.RuleName));
 
         var messageText = BotMessageFormatter.FormatNotifyMessage(accountId, record, matchedRules);
-        var callbackData = BotMessageFormatter.BuildCallbackData(accountId, record);
+        var callbackActions = BotMessageFormatter.BuildCallbackActions(accountId, record);
 
         foreach (var target in targets)
         {
@@ -503,7 +504,7 @@ public class TelegramAccountRuntimeHub : ITelegramAccountRuntimeHub
                 target.ChatId,
                 target.ChatTitle,
                 messageText,
-                callbackData));
+                callbackActions));
         }
 
         _logger.LogInformation(
