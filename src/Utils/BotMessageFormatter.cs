@@ -37,6 +37,7 @@ public static class BotMessageFormatter
 
     public static BotCallbackActions BuildCallbackActions(int accountId, TelegramMessageRecord record) =>
         new(
+            BuildMessageLink(record),
             record.SenderId.HasValue ? BuildCallbackData("blku", accountId, record.Id) : null,
             record.ChatId.HasValue && !string.Equals(record.ChatType, "User", StringComparison.OrdinalIgnoreCase)
                 ? BuildCallbackData("blkg", accountId, record.Id)
@@ -56,6 +57,9 @@ public static class BotMessageFormatter
 
         if (!string.IsNullOrWhiteSpace(record.ChatUsername))
             return $"https://t.me/{record.ChatUsername}/{record.TelegramMessageId}";
+
+        if (record.ChatType is not ("Group" or "Channel" or "Supergroup"))
+            return null;
 
         var chatId = record.ChatId.Value;
         if (chatId < 0)
@@ -78,6 +82,7 @@ public static class BotMessageFormatter
 }
 
 public record BotCallbackActions(
+    string? MessageUrl,
     string? BlockUser,
     string? BlockChat,
     string? BlockContent);

@@ -186,13 +186,21 @@ public class BotService : IBotService, IAsyncDisposable
 
         var startIndex = (int)((uint)Interlocked.Increment(ref _roundRobinIndex) % _bots.Count);
 
-        var buttons = new List<InlineKeyboardButton>();
-        AddButton(buttons, "🚫 屏蔽此人", callbackActions.BlockUser);
-        AddButton(buttons, "🚫 屏蔽此群组", callbackActions.BlockChat);
-        AddButton(buttons, "🚫 屏蔽此内容", callbackActions.BlockContent);
-        InlineKeyboardMarkup? replyMarkup = buttons.Count == 0
+        var buttonRows = new List<InlineKeyboardButton[]>();
+        if (!string.IsNullOrWhiteSpace(callbackActions.MessageUrl))
+        {
+            buttonRows.Add(new[]
+            {
+                InlineKeyboardButton.WithUrl("🔗 立即前往", callbackActions.MessageUrl)
+            });
+        }
+
+        AddCallbackButton(buttonRows, "🚫 屏蔽此人", callbackActions.BlockUser);
+        AddCallbackButton(buttonRows, "🚫 屏蔽此群组", callbackActions.BlockChat);
+        AddCallbackButton(buttonRows, "🚫 屏蔽此内容", callbackActions.BlockContent);
+        InlineKeyboardMarkup? replyMarkup = buttonRows.Count == 0
             ? null
-            : new InlineKeyboardMarkup(buttons.Select(button => new[] { button }).ToArray());
+            : new InlineKeyboardMarkup(buttonRows.ToArray());
 
         Exception? lastException = null;
         for (var offset = 0; offset < _bots.Count; offset++)
@@ -224,10 +232,13 @@ public class BotService : IBotService, IAsyncDisposable
         throw new InvalidOperationException("没有可用的 Bot 可用于发送通知");
     }
 
-    private static void AddButton(List<InlineKeyboardButton> buttons, string text, string? callbackData)
+    private static void AddCallbackButton(
+        List<InlineKeyboardButton[]> buttonRows,
+        string text,
+        string? callbackData)
     {
         if (!string.IsNullOrWhiteSpace(callbackData))
-            buttons.Add(InlineKeyboardButton.WithCallbackData(text, callbackData));
+            buttonRows.Add(new[] { InlineKeyboardButton.WithCallbackData(text, callbackData) });
     }
 
     public async ValueTask DisposeAsync()
