@@ -1,6 +1,6 @@
 # TelegramMonitor
 
-TelegramMonitor 是一个基于 Web 后台的 Telegram 监听工具，支持账号登录、关键词规则、消息归档和 Bot 通知。
+TelegramMonitor 是一个基于 Web 后台的 Telegram 监听工具，支持账号登录、关键词规则、消息归档、Bot 通知和快捷黑名单管理。
 
 它适合这些场景：
 
@@ -20,6 +20,9 @@ TelegramMonitor 是一个基于 Web 后台的 Telegram 监听工具，支持账�
 - 支持 `Monitor` 和 `Exclude` 两种动作，并带优先级
 - 消息归档与分页查询
 - 多 Bot 通知发送
+- Bot 通知支持一键前往原消息
+- Bot 通知支持一键屏蔽用户、群组或完全相同的消息内容
+- 独立的用户与群组黑名单管理页面，支持筛选、停用、启用和解除屏蔽
 - 默认使用 SQLite，也可切换到其他 SqlSugar 支持的数据库
 
 ## 页面预览
@@ -101,12 +104,14 @@ http://localhost:5005/
 5. 登录成功后开启监听。
 6. 进入 `关键词设置` 页面 `/keywords.html` 添加规则。
 7. 如需转发通知，再进入 `Bot 通知` 页面 `/bot.html` 配置目标。
+8. 通过通知按钮屏蔽用户或群组后，可在 `/blacklist.html` 统一管理黑名单。
 
 ## 后台页面说明
 
 - `/`：管理员登录页
 - `/dashboard.html`：账号管理和监听控制
 - `/keywords.html`：关键词规则管理
+- `/blacklist.html`：被屏蔽用户与群组的黑名单管理
 - `/messages.html`：消息归档查询
 - `/bot.html`：Bot 状态和通知目标管理
 
@@ -115,6 +120,12 @@ http://localhost:5005/
 - 通知目标同时支持 `Chat ID` 和 `@username`
 - 添加目标时会校验所有已配置 Bot
 - 只有所有 Bot 都能访问该会话，并且在群组/频道场景下都具备发消息权限，目标才会添加成功
+- 命中通知会根据消息类型显示以下快捷按钮：
+  - `立即前往`：打开对应的 Telegram 原消息；无法可靠定位的普通群或私聊不显示
+  - `屏蔽此人`：当前监听账号不再通知该发送者的消息
+  - `屏蔽此群组`：当前监听账号不再通知该群组或频道的消息
+  - `屏蔽此内容`：精确屏蔽与当前消息完整文本完全相同的内容，不按关键词包含匹配
+- 用户和群组屏蔽记录可以在黑名单页面停用、重新启用或删除
 
 这意味着：
 
@@ -130,11 +141,13 @@ docker run -d \
   --name telegram-monitor \
   --restart unless-stopped \
   -p 5005:5005 \
-  -v ./tm-data:/data \
+  -v /root/tm-data:/data \
   -e Telegram__DefaultApiId=123456 \
   -e Telegram__DefaultApiHash=your_api_hash \
   -e Auth__AdminPassword=change-me \
-  ghcr.io/riniba/telegrammonitor:latest
+  -e Bot__Enabled=true \
+  -e Bot__Tokens__0=your_bot_token \
+  ghcr.io/apomke/telegrammonitor:latest
 ```
 
 容器说明：
@@ -142,6 +155,35 @@ docker run -d \
 - 持久化目录统一使用 `/data`
 - 程序运行时会把数据库、会话文件和日志链接到 `/data`
 - 如果启用了 Bot，多 Bot 产生的 SQLite 文件也会持久化到 `/data`
+- 生产环境建议使用绝对路径挂载数据目录，避免从不同工作目录启动时误用新的空目录
+
+### Docker 无损升级
+
+升级前先读取旧容器实际使用的数据目录，不要凭当前终端目录猜测相对路径：
+
+```bash
+DATA_DIR="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}' telegram-monitor)"
+test -n "$DATA_DIR" || { echo "未找到 /data 挂载"; exit 1; }
+
+docker pull ghcr.io/apomke/telegrammonitor:latest
+docker stop telegram-monitor
+cp -a "$DATA_DIR" "${DATA_DIR}.backup-$(date +%Y%m%d-%H%M%S)"
+docker rm telegram-monitor
+```
+
+随后使用原来的环境变量重新创建容器，并始终挂载实际目录：
+
+```bash
+docker run -d \
+  --name telegram-monitor \
+  --restart unless-stopped \
+  -p 5005:5005 \
+  -v "$DATA_DIR:/data" \
+  --env-file /root/telegram-monitor.env \
+  ghcr.io/apomke/telegrammonitor:latest
+```
+
+删除旧容器不会删除宿主机上的 `$DATA_DIR`。数据库、Telegram 登录会话、关键词、黑名单和 Bot 状态都会继续使用原数据。
 
 ## `docker-entrypoint.sh` 是做什么的
 
@@ -182,13 +224,14 @@ docker run -d \
 - `Bot__Tokens__0`
 - `Bot__Tokens__1`
 
-## 发布下载
+## 构建与镜像
 
-- 最新发布页：https://github.com/Riniba/TelegramMonitor/releases/latest
+- Docker 镜像：`ghcr.io/apomke/telegrammonitor:latest`
+- 自动构建状态：https://github.com/APomke/TelegramMonitor/actions
 
 ## 文档
 
-- 在线 GitHub Wiki：https://github.com/Riniba/TelegramMonitor/wiki
+- 上游 GitHub Wiki：https://github.com/Riniba/TelegramMonitor/wiki
 - 仓库内的 Wiki 源文件目录：[wiki/](./wiki/)
 
 ## 许可证
